@@ -20,6 +20,13 @@ Source6: nvidia-cdi-hook
 Source7: nvidia-cdi-refresh.service
 Source8: nvidia-cdi-refresh.path
 Source9: nvidia-cdi-refresh.env
+Source10: 90-nvidia-container-toolkit.preset
+
+%if 0%{?rhel} == 7 || 0%{?amzn} == 2
+BuildRequires: systemd
+%else
+BuildRequires: systemd-rpm-macros
+%endif
 
 Obsoletes: nvidia-container-runtime <= 3.5.0-1, nvidia-container-runtime-hook <= 1.4.0-2
 Provides: nvidia-container-runtime
@@ -31,11 +38,12 @@ Requires: nvidia-container-toolkit-base == %{version}-%{release}
 Provides tools and utilities to enable GPU support in containers.
 
 %prep
-cp %{SOURCE0} %{SOURCE1} %{SOURCE2} %{SOURCE3} %{SOURCE4} %{SOURCE5} %{SOURCE6} %{SOURCE7} %{SOURCE8} %{SOURCE9} .
+cp %{SOURCE0} %{SOURCE1} %{SOURCE2} %{SOURCE3} %{SOURCE4} %{SOURCE5} %{SOURCE6} %{SOURCE7} %{SOURCE8} %{SOURCE9} %{SOURCE10} .
 
 %install
 mkdir -p %{buildroot}%{_bindir}
-mkdir -p %{buildroot}%{_sysconfdir}/systemd/system/
+mkdir -p %{buildroot}%{_unitdir}
+mkdir -p %{buildroot}%{_presetdir}
 mkdir -p %{buildroot}%{_sysconfdir}/nvidia-container-toolkit
 
 install -m 755 -t %{buildroot}%{_bindir} nvidia-container-runtime-hook
@@ -44,8 +52,9 @@ install -m 755 -t %{buildroot}%{_bindir} nvidia-container-runtime.cdi
 install -m 755 -t %{buildroot}%{_bindir} nvidia-container-runtime.legacy
 install -m 755 -t %{buildroot}%{_bindir} nvidia-ctk
 install -m 755 -t %{buildroot}%{_bindir} nvidia-cdi-hook
-install -m 644 -t %{buildroot}%{_sysconfdir}/systemd/system nvidia-cdi-refresh.service
-install -m 644 -t %{buildroot}%{_sysconfdir}/systemd/system nvidia-cdi-refresh.path
+install -m 644 -t %{buildroot}%{_unitdir} nvidia-cdi-refresh.service
+install -m 644 -t %{buildroot}%{_unitdir} nvidia-cdi-refresh.path
+install -m 644 -t %{buildroot}%{_presetdir} 90-nvidia-container-toolkit.preset
 install -m 644 -t %{buildroot}%{_sysconfdir}/nvidia-container-toolkit nvidia-cdi-refresh.env
 
 %post
@@ -94,29 +103,29 @@ Provides tools such as the NVIDIA Container Runtime and NVIDIA Container Toolkit
 # Generate the default config; If this file already exists no changes are made.
 %{_bindir}/nvidia-ctk --quiet config --config-file=%{_sysconfdir}/nvidia-container-runtime/config.toml --in-place
 
-# Reload systemd unit cache and enable nvidia-cdi-refresh services on both install and upgrade
+%systemd_post nvidia-cdi-refresh.path nvidia-cdi-refresh.service
+
+# Trigger CDI refresh on running systemd hosts without making install depend on
+# the current system state.
 if command -v systemctl >/dev/null 2>&1; then
-  SYSTEMD_STATE=$(systemctl is-system-running 2>/dev/null || true)
-  case "$SYSTEMD_STATE" in
-    running|degraded)
-      systemctl daemon-reload || echo "Warning: Failed to reload systemd daemon" >&2
-      systemctl enable --now nvidia-cdi-refresh.path || echo "Warning: Failed to enable nvidia-cdi-refresh.path" >&2
-      systemctl enable --now nvidia-cdi-refresh.service || echo "Warning: Failed to enable nvidia-cdi-refresh.service" >&2
-      
-      # Trigger CDI spec regeneration immediately after install/upgrade
-      echo "Regenerating NVIDIA CDI specification..."
-      systemctl start nvidia-cdi-refresh.service || echo "Warning: Failed to trigger CDI refresh" >&2
-      ;;
-  esac
+  systemctl start nvidia-cdi-refresh.path >/dev/null 2>&1 || :
+  systemctl start nvidia-cdi-refresh.service >/dev/null 2>&1 || :
 fi
+
+%preun base
+%systemd_preun nvidia-cdi-refresh.path nvidia-cdi-refresh.service
+
+%postun base
+%systemd_postun nvidia-cdi-refresh.path nvidia-cdi-refresh.service
 
 %files base
 %license LICENSE
 %{_bindir}/nvidia-container-runtime
 %{_bindir}/nvidia-ctk
 %{_bindir}/nvidia-cdi-hook
-%{_sysconfdir}/systemd/system/nvidia-cdi-refresh.service
-%{_sysconfdir}/systemd/system/nvidia-cdi-refresh.path
+%{_unitdir}/nvidia-cdi-refresh.service
+%{_unitdir}/nvidia-cdi-refresh.path
+%{_presetdir}/90-nvidia-container-toolkit.preset
 %config(noreplace) %{_sysconfdir}/nvidia-container-toolkit/nvidia-cdi-refresh.env
 
 # The OPERATOR EXTENSIONS package consists of components that are required to enable GPU support in Kubernetes.
